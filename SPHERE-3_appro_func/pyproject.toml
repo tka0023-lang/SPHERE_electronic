@@ -1,0 +1,44 @@
+[project]
+name = "sphere-3-appro"
+version = "0.2.0"
+requires-python = ">=3.14"
+dependencies = [
+    "iminuit>=2.32.0",
+    "matplotlib>=3.10.8",
+    "numpy>=2.3.5",
+    "pandas>=3.0.1",
+    "pyarrow>=23.0.1",
+    "scipy>=1.16.3",
+    "tabulate>=0.10.0",
+    "zstandard>=0.23.0",
+]
+
+[project.optional-dependencies]
+minuit = ["iminuit>=2.32.0"]
+vis = ["matplotlib>=3.9"]
+analysis = [
+    "scikit-learn>=1.6",
+    "xgboost>=2.1",
+    "lightgbm>=4.5",
+    "seaborn>=0.13",
+]
+dev = ["iminuit>=2.32.0", "matplotlib>=3.9", "ruff", "cython>=3.0", "pytest"]
+
+[dependency-groups]
+dev = [
+    "cython>=3.2.4",
+    "joblib>=1.5.3",
+    "lightgbm>=4.6.0",
+    "pytest>=9.0.2",
+    "pytest-timeout>=2.4.0",
+    "scikit-learn>=1.8.0",
+    "setuptools>=82.0.1",
+    "xgboost>=3.2.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["sphere_appro*"]
+
+[build-system]
+requires = ["setuptools>=75", "numpy>=2.3.5"]
+build-backend = "setuptools.build_meta"

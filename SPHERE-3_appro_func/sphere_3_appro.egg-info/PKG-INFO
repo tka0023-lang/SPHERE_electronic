@@ -1,0 +1,27 @@
+Metadata-Version: 2.4
+Name: sphere-3-appro
+Version: 0.2.0
+Requires-Python: >=3.14
+Requires-Dist: iminuit>=2.32.0
+Requires-Dist: matplotlib>=3.10.8
+Requires-Dist: numpy>=2.3.5
+Requires-Dist: pandas>=3.0.1
+Requires-Dist: pyarrow>=23.0.1
+Requires-Dist: scipy>=1.16.3
+Requires-Dist: tabulate>=0.10.0
+Requires-Dist: zstandard>=0.23.0
+Provides-Extra: minuit
+Requires-Dist: iminuit>=2.32.0; extra == "minuit"
+Provides-Extra: vis
+Requires-Dist: matplotlib>=3.9; extra == "vis"
+Provides-Extra: analysis
+Requires-Dist: scikit-learn>=1.6; extra == "analysis"
+Requires-Dist: xgboost>=2.1; extra == "analysis"
+Requires-Dist: lightgbm>=4.5; extra == "analysis"
+Requires-Dist: seaborn>=0.13; extra == "analysis"
+Provides-Extra: dev
+Requires-Dist: iminuit>=2.32.0; extra == "dev"
+Requires-Dist: matplotlib>=3.9; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: cython>=3.0; extra == "dev"
+Requires-Dist: pytest; extra == "dev"
