@@ -9,6 +9,7 @@
 #include <functional>
 #include <random>
 #include <cstring>
+#include <zstd.h>
 
 #define VERBOSE 0
 #define DIAG_VERBOSE 1
@@ -125,7 +126,81 @@ double mini(int const x, int const y)
     double A[ 3 ][ 3 ]{ { 0 } };
     double B[ 3 ][ 3 ]{ { 0 } };
 
-int main() {
+// ================== НОВЫЙ КОД ДЛЯ ЧТЕНИЯ MOSHIT ==================
+struct MoshitFileHeader {
+    char     magic[4];  // "MOSH"
+    uint8_t  version;   // 1
+    uint8_t  _pad0;
+    uint16_t _pad1;
+    float    zz;        // detector altitude, m
+    float    xsh;       // shower core shift X, m
+    float    ysh;       // shower core shift Y, m
+    uint32_t n_hits;
+};
+static_assert(sizeof(MoshitFileHeader) == 24);
+
+struct MoshitFileHit {
+    uint16_t pixel;   // absolute pixel: 0..N_CHAN-1
+    uint8_t  origin;  // 1=Cherenkov, 2=background
+    uint8_t  kk;
+    uint16_t ii;
+    uint16_t jj;
+    float    t;       // detection time, ns
+    float    t0;      // emission/source time, ns
+};
+static_assert(sizeof(MoshitFileHit) == 16);
+
+struct MoshitFile {
+    MoshitFileHeader header{};
+    std::vector<MoshitFileHit> hits;
+};
+
+static std::vector<char> read_all(const std::string& path) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) throw std::runtime_error("cannot open " + path);
+
+    const auto size = f.tellg();
+    if (size <= 0) throw std::runtime_error("empty/bad file " + path);
+
+    std::vector<char> data(static_cast<size_t>(size));
+    f.seekg(0);
+    f.read(data.data(), static_cast<std::streamsize>(data.size()));
+    if (!f) throw std::runtime_error("failed to read " + path);
+    return data;
+}
+
+MoshitFile read_moshit_zst(const std::string& path) {
+    const auto compressed = read_all(path);
+
+    const unsigned long long raw_size_ull = ZSTD_getFrameContentSize(compressed.data(), compressed.size());
+    if (raw_size_ull == ZSTD_CONTENTSIZE_UNKNOWN || raw_size_ull == ZSTD_CONTENTSIZE_ERROR) {
+        throw std::runtime_error("cannot determine decompressed size");
+    }
+
+    std::vector<char> raw(static_cast<size_t>(raw_size_ull));
+    const size_t got = ZSTD_decompress(raw.data(), raw.size(), compressed.data(), compressed.size());
+    if (ZSTD_isError(got)) {
+        throw std::runtime_error(std::string("zstd: ") + ZSTD_getErrorName(got));
+    }
+    if (got != raw.size() || raw.size() < sizeof(MoshitFileHeader)) {
+        throw std::runtime_error("bad decompressed payload size");
+    }
+
+    MoshitFile out;
+    std::memcpy(&out.header, raw.data(), sizeof(out.header));
+
+    if (std::memcmp(out.header.magic, "MOSH", 4) != 0) throw std::runtime_error("bad magic, expected MOSH");
+    if (out.header.version != 1) throw std::runtime_error("unsupported MOSH version");
+
+    const size_t expected = sizeof(MoshitFileHeader) + static_cast<size_t>(out.header.n_hits) * sizeof(MoshitFileHit);
+    if (raw.size() != expected) throw std::runtime_error("size mismatch: header n_hits does not match payload");
+
+    out.hits.resize(out.header.n_hits);
+    std::memcpy(out.hits.data(), raw.data() + sizeof(MoshitFileHeader), out.hits.size() * sizeof(MoshitFileHit));
+    return out;
+}
+// =================================================================
+int main(int argc, char *argv[]) {
     //    ModelElectronics model;   
     //    ThreadManager manager(model);;
     //    manager.inputAll();
@@ -133,16 +208,17 @@ int main() {
     if (VERBOSE) {std::cout << "Initialization." << std::endl;}
     
     
-    std::ifstream moshits("mosaic_hits", std::ios::binary);
+//    std::ifstream moshits("mosaic_hits", std::ios::binary);
+    /*std::ifstream moshits(argv[1], std::ios::binary);
     if (!moshits.is_open()) {
         std::cerr << "[\033[31mFAILURE\033[0m]: Failed to open the moshits file!" << std::endl;
         return 1;
-    }
+    }*/
 
-    N_PHEL = int(std::count(std::istreambuf_iterator<char>(moshits),
-                            std::istreambuf_iterator<char>(), '\n')) - 1;
+    //N_PHEL = int(std::count(std::istreambuf_iterator<char>(moshits),
+    //                        std::istreambuf_iterator<char>(), '\n')) -1;
 
-    moshits.clear();
+/*    moshits.clear();
     moshits.seekg(0, std::ios::beg);
 
     std::string line;
@@ -171,7 +247,112 @@ int main() {
     auto min_it{std::min_element(T.begin(), T.end())};
     Tmin = *min_it;
     moshits.close();
+    */
+        if (VERBOSE) {std::cout << "Initialization." << std::endl;}
+
+    // === НОВОЕ ЧТЕНИЕ ФАЙЛА moshit ===
+    std::string moshit_filename = argv[1]; // Укажите актуальное имя вашего файла
+    MoshitFile moshit_data;
     
+    try {
+        moshit_data = read_moshit_zst(moshit_filename);
+    } catch (const std::exception& e) {
+        std::cerr << "[\033[31mFAILURE\033[0m]: Failed to read moshit file: " << e.what() << std::endl;
+        return 1;
+    }
+
+    // Заполняем глобальные переменные из новой структуры
+    N_PHEL = moshit_data.hits.size();
+    
+    // Высота сохраняется с минусом, как это делалось в старом текстовом формате
+    H = -moshit_data.header.zz; 
+
+    // Очищаем векторы перед заполнением
+    PhType.clear();
+    PMTid.clear();
+    T.clear();
+    PhType.reserve(N_PHEL);
+    PMTid.reserve(N_PHEL);
+    T.reserve(N_PHEL);
+
+    for (const auto& hit : moshit_data.hits) {
+        PhType.push_back(hit.origin);     // origin (1=Cherenkov, 2=background)
+        
+        // === КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ===
+        // Преобразуем последовательный индекс физического пикселя (0..2652) 
+        // в формат канала программы (0..3031), где каждый 8-й канал - пустышка.
+        int M = hit.pixel / 7;            // Номер модуля (0..378)
+        int P = hit.pixel % 7;            // Номер пикселя внутри модуля (0..6)
+        int channel_id = M * 8 + P;       // Итоговый индекс канала
+        
+        PMTid.push_back(channel_id);
+        T.push_back(hit.t);               // detection time
+    }
+
+    auto min_it = std::min_element(T.begin(), T.end());
+    if (min_it != T.end()) {
+        Tmin = *min_it;
+    } else {
+        Tmin = 0.0;
+    }
+    
+    if (VERBOSE) {std::cout << "Photons loaded. Total hits: " << N_PHEL << std::endl;}
+    // === КОНЕЦ НОВОГО ЧТЕНИЯ ===
+    if (VERBOSE) {std::cout << "Photons loaded. Total hits: " << N_PHEL << std::endl;}
+
+    // === ДИАГНОСТИКА ===
+    int n_cherenkov = 0;
+    int n_background = 0;
+    int n_out_of_bounds = 0;
+    double Tmax = Tmin;
+    std::vector<int> channel_histogram(N_CHAN, 0);
+
+    for (int idx = 0; idx < N_PHEL; ++idx) {
+        if (PhType[idx] == 1) n_cherenkov++;
+        else if (PhType[idx] == 2) n_background++;
+    
+        if (T[idx] > Tmax) Tmax = T[idx];
+    
+        if (PMTid[idx] >= 0 && PMTid[idx] < N_CHAN) {
+            channel_histogram[PMTid[idx]]++;
+        } else {
+            n_out_of_bounds++;
+        }
+    }
+
+    std::cout << "=== DIAGNOSTICS ===" << std::endl;
+    std::cout << "Total photons: " << N_PHEL << std::endl;
+    std::cout << "Cherenkov (origin=1): " << n_cherenkov << std::endl;
+    std::cout << "Background (origin=2): " << n_background << std::endl;
+    std::cout << "Out of bounds channels: " << n_out_of_bounds << std::endl;
+    std::cout << "Time range: " << Tmin << " ns to " << Tmax << " ns (span: " << (Tmax - Tmin) << " ns)" << std::endl;
+
+    // Проверка, не попадают ли фотоны на "пустышки" (каналы с индексом % 8 == 7)
+    int n_on_dummies = 0;
+    for (int idx = 0; idx < N_PHEL; ++idx) {
+        if (PMTid[idx] % 8 == 7) n_on_dummies++;
+    }
+    std::cout << "Photons on dummy channels (%8==7): " << n_on_dummies << std::endl;
+    
+    // Вывод первых 10 фотонов для проверки
+    std::cout << "First 10 photons (pixel -> channel_id, origin, time):" << std::endl;
+    for (int idx = 0; idx < std::min(10, N_PHEL); ++idx) {
+        std::cout << "  " << moshit_data.hits[idx].pixel 
+                  << " -> " << PMTid[idx] 
+                  << ", origin=" << PhType[idx] 
+                  << ", t=" << T[idx] << " ns" << std::endl;
+    }
+   
+    // Подсчёт уникальных задействованных каналов
+    int n_active_channels = 0;
+    for (int j = 0; j < N_CHAN; ++j) {
+        if (channel_histogram[j] > 0) n_active_channels++;
+    }
+    std::cout << "Active channels (with >=1 photon): " << n_active_channels << std::endl;
+    std::cout << "=== END DIAGNOSTICS ===" << std::endl;
+    // === КОНЕЦ ДИАГНОСТИКИ ===
+
+if (VERBOSE) {std::cout << "Photons loaded." << std::endl;}
     if (VERBOSE) {std::cout << "Photons loaded." << std::endl;}
     
     {
